@@ -1,0 +1,47 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <TargetFramework>net8.0</TargetFramework>
+        <LangVersion>latest</LangVersion>
+        <Nullable>enable</Nullable>
+        <ImplicitUsings>enable</ImplicitUsings>
+        <GenerateDocumentationFile>true</GenerateDocumentationFile>
+        <!-- Suppress XML doc warnings for not-every-public-member-documented -->
+        <NoWarn>$(NoWarn);CS1591</NoWarn>
+        <RootNamespace>Newsdata.Api</RootNamespace>
+        <AssemblyName>Newsdata.Api</AssemblyName>
+    </PropertyGroup>
+
+    <!-- NuGet package metadata -->
+    <PropertyGroup>
+        <PackageId>Newsdata.Api</PackageId>
+        <Version>0.0.1</Version>
+        <Authors>NewsData.io</Authors>
+        <Company>NewsData.io</Company>
+        <Description>Official .NET client (SDK) for the Newsdata.io News API: typed methods for real-time, historical, crypto and market news with validation, retries and typed exceptions.</Description>
+        <Copyright>Copyright (c) 2026 NewsData.io</Copyright>
+        <PackageTags>newsdata;newsdata-io;news-api;news;sdk;api-client;rest-api;crypto-news;financial-news;market-news</PackageTags>
+        <PackageLicenseExpression>MIT</PackageLicenseExpression>
+        <PackageProjectUrl>https://github.com/newsdataapi/newsdata-dotnet-sdk</PackageProjectUrl>
+        <RepositoryUrl>https://github.com/newsdataapi/newsdata-dotnet-sdk.git</RepositoryUrl>
+        <RepositoryType>git</RepositoryType>
+        <PackageReadmeFile>README.md</PackageReadmeFile>
+        <PackageIcon></PackageIcon>
+        <PublishRepositoryUrl>true</PublishRepositoryUrl>
+        <EmbedUntrackedSources>true</EmbedUntrackedSources>
+        <IncludeSymbols>true</IncludeSymbols>
+        <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <!-- README pulled into the .nupkg so nuget.org renders it on the
+             package page. Lives at the repo root; path is relative to csproj. -->
+        <None Include="..\..\README.md" Pack="true" PackagePath="\" />
+    </ItemGroup>
+
+    <!-- Expose internals (Validator, ParseRetryAfter) to the test project. -->
+    <ItemGroup>
+        <InternalsVisibleTo Include="Newsdata.Api.Tests" />
+    </ItemGroup>
+
+</Project>

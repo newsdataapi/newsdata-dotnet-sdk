@@ -1,0 +1,65 @@
+name: Publish to NuGet
+
+# Publishes to NuGet.org when a v-prefixed tag is pushed (e.g. v0.0.2).
+# Optionally trigger manually from the Actions tab.
+#
+# Required GitHub secret (one-time setup):
+#   NUGET_API_KEY  - generated at https://www.nuget.org/account/apikeys
+#                    Scope: "Push new packages and package versions"
+#                    Glob:  Newsdata.* (or your namespace)
+#
+# Once NuGet.org's OIDC trusted publishing GA's, this can be migrated to
+# tokenless publishing (mirroring the npm / PyPI / pub.dev workflows).
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  id-token: write   # reserved for OIDC trusted publishing once GA
+
+jobs:
+  publish:
+    name: Publish to NuGet
+    runs-on: ubuntu-latest
+    environment:
+      name: nuget
+      url: https://www.nuget.org/packages/Newsdata.Api
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Verify tag matches csproj version
+        run: |
+          PKG_VERSION=$(grep -oP '(?<=<Version>)[^<]+' src/Newsdata.Api/Newsdata.Api.csproj | head -1)
+          TAG="${GITHUB_REF_NAME#v}"
+          if [ "$PKG_VERSION" != "$TAG" ]; then
+            echo "::error::Release tag '${GITHUB_REF_NAME}' (version '$TAG') does not match csproj <Version> '$PKG_VERSION'"
+            exit 1
+          fi
+          echo "Publishing Newsdata.Api $PKG_VERSION"
+
+      - name: Restore + test
+        run: |
+          dotnet restore
+          dotnet test -c Release --verbosity normal
+
+      - name: Pack (.nupkg + .snupkg with symbols)
+        run: |
+          dotnet pack src/Newsdata.Api/Newsdata.Api.csproj \
+            -c Release \
+            --no-restore \
+            -o ./artifacts
+
+      - name: Publish to NuGet.org
+        run: |
+          dotnet nuget push './artifacts/*.nupkg' \
+            --api-key "${{ secrets.NUGET_API_KEY }}" \
+            --source https://api.nuget.org/v3/index.json \
+            --skip-duplicate
