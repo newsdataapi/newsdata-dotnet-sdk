@@ -1,5 +1,7 @@
 <div align="center">
 
+![Newsdata.io logo](https://raw.githubusercontent.com/newsdataapi/newsdata-dotnet-sdk/main/newsdata-logo.png)
+
 # Newsdata.io .NET SDK
 
 [![NuGet](https://img.shields.io/nuget/v/Newsdata.Api.svg?logo=nuget&color=004880)](https://www.nuget.org/packages/Newsdata.Api)
@@ -197,6 +199,21 @@ git push origin v0.0.2
 
 See [`.github/workflows/publish.yml`](.github/workflows/publish.yml) for
 the NuGet.org publishing flow.
+
+## Related libraries
+
+Official Newsdata.io clients across languages and runtimes:
+
+- **Python** — [newsdataapi/python-client](https://github.com/newsdataapi/python-client) ([PyPI](https://pypi.org/project/newsdataapi/))
+- **Node.js** — [newsdataapi/newsdata-nodejs-client](https://github.com/newsdataapi/newsdata-nodejs-client) (npm)
+- **React (hooks)** — [newsdataapi/newsdata-reactjs-client](https://github.com/newsdataapi/newsdata-reactjs-client) (npm)
+- **PHP** — [newsdataapi/php-client](https://github.com/newsdataapi/php-client) ([Packagist](https://packagist.org/packages/newsdataio/newsdataapi))
+- **Java** — [newsdataapi/newsdata-java-sdk](https://github.com/newsdataapi/newsdata-java-sdk) (Maven Central)
+- **Go** — [newsdataapi/newsdata-go-client](https://github.com/newsdataapi/newsdata-go-client) (Go modules)
+- **Dart / Flutter** — [newsdataapi/newsdata-flutter-client](https://github.com/newsdataapi/newsdata-flutter-client) (pub.dev)
+- **MCP Server (AI assistants)** — [newsdataapi/newsdata.io-mcp](https://github.com/newsdataapi/newsdata.io-mcp) ([PyPI](https://pypi.org/project/newsdata-mcp/))
+
+Also see [free news datasets](https://github.com/newsdataapi/newsdata.io-free-datasets) for ML / NLP work.
 
 ## License
 
