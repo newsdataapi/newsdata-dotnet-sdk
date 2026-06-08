@@ -9,6 +9,7 @@
 [![CI](https://img.shields.io/github/actions/workflow/status/newsdataapi/newsdata-dotnet-sdk/ci.yml?branch=main&logo=github&label=CI)](https://github.com/newsdataapi/newsdata-dotnet-sdk/actions/workflows/ci.yml)
 [![.NET](https://img.shields.io/badge/.NET-8.0-512BD4?logo=dotnet)](https://dotnet.microsoft.com)
 [![License](https://img.shields.io/badge/license-MIT-blue)](./LICENSE)
+[![OpenAPI](https://img.shields.io/badge/OpenAPI-3.1-85EA2D)](https://newsdata.io/openapi.json)
 
 </div>
 
