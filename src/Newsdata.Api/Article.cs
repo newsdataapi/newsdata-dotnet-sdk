@@ -33,4 +33,6 @@ public sealed record Article(
     [property: JsonPropertyName("ai_org")]        IReadOnlyList<string>? AiOrg,
     [property: JsonPropertyName("sentiment")]     string? Sentiment,
     [property: JsonPropertyName("sentiment_stats")] System.Text.Json.JsonElement? SentimentStats,
-    [property: JsonPropertyName("datatype")]      string? DataType);
+    [property: JsonPropertyName("datatype")]      string? DataType,
+    [property: JsonPropertyName("symbol")]        IReadOnlyList<string>? Symbol,
+    [property: JsonPropertyName("market_id")]     IReadOnlyList<string>? MarketId);

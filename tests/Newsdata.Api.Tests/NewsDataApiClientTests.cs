@@ -249,6 +249,34 @@ public class NewsDataApiClientTests
         Assert.Equal(1, art.SourcePriority);
     }
 
+    // Market results carry both `symbol` and `market_id`; the two are separate
+    // response fields and both decode onto Article.
+    [Fact]
+    public async Task Article_decodes_symbol_and_market_id()
+    {
+        var handler = new MockHandler(_ => Resp(HttpStatusCode.OK,
+            SuccessBody("[{\"article_id\":\"m1\",\"symbol\":[\"AAPL\",\"MSFT\"],"
+                + "\"market_id\":[\"NASDAQ:AAPL\",\"NASDAQ:MSFT\"]}]")));
+        using var client = ClientWith(handler);
+
+        var resp = await client.MarketAsync(Params.Of().With("market_id", "AAPL"));
+        var art = resp.GetArticles()[0];
+        Assert.Equal(new[] { "AAPL", "MSFT" }, art.Symbol!);
+        Assert.Equal(new[] { "NASDAQ:AAPL", "NASDAQ:MSFT" }, art.MarketId!);
+    }
+
+    [Fact]
+    public async Task Article_symbol_and_market_id_are_null_when_absent()
+    {
+        var handler = new MockHandler(_ => Resp(HttpStatusCode.OK,
+            SuccessBody("[{\"article_id\":\"a1\",\"title\":\"t\"}]")));
+        using var client = ClientWith(handler);
+
+        var art = (await client.LatestAsync(Params.Of().With("q", "x"))).GetArticles()[0];
+        Assert.Null(art.Symbol);
+        Assert.Null(art.MarketId);
+    }
+
     [Fact]
     public async Task Count_returns_aggregate_map()
     {
