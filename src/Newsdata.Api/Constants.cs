@@ -1,3 +1,5 @@
+using System.Net.Http;
+
 namespace Newsdata.Api;
 
 /// <summary>
@@ -30,7 +32,43 @@ internal static class Constants
             ["count"]        = "count",
             ["crypto_count"] = "crypto/count",
             ["market_count"] = "market/count",
+            ["websocket_register"] = "websocket/register",
+            ["websocket_fetch"]    = "websocket/fetch",
+            ["websocket_delete"]   = "websocket/delete",
         };
+
+    /// <summary>HTTP method per endpoint; anything absent is a GET.</summary>
+    public static readonly IReadOnlyDictionary<string, HttpMethod> EndpointMethods =
+        new Dictionary<string, HttpMethod>
+        {
+            ["websocket_register"] = HttpMethod.Post,
+            ["websocket_delete"]   = HttpMethod.Delete,
+        };
+
+    /// <summary>
+    /// Endpoints whose success envelope may carry no <c>results</c> field, so
+    /// they are exempt from the results-present check applied elsewhere.
+    /// </summary>
+    public static readonly IReadOnlySet<string> ResultsOptional =
+        new HashSet<string> { "websocket_register", "websocket_fetch", "websocket_delete" };
+
+    /// <summary>Real-time WebSocket endpoint.</summary>
+    public const string WsBaseUrl = "wss://ws.newsdata.io/ws/event";
+
+    /// <summary>The feed a registered query matches against.</summary>
+    public const string WsNewsType = "latest";
+
+    /// <summary>Close code the server uses for a permanent connection rejection.</summary>
+    public const int WsPolicyViolation = 1008;
+
+    /// <summary>Wait before the first reconnect; doubles after each failure.</summary>
+    public static readonly TimeSpan WsReconnectDelay = TimeSpan.FromSeconds(1);
+
+    /// <summary>Upper bound on the reconnect delay.</summary>
+    public static readonly TimeSpan WsReconnectDelayMax = TimeSpan.FromSeconds(30);
+
+    /// <summary>Bound on the opening handshake.</summary>
+    public static readonly TimeSpan WsHandshakeTimeout = TimeSpan.FromSeconds(10);
 
     public static readonly IReadOnlySet<string> RequiresDateRange =
         new HashSet<string> { "count", "crypto_count", "market_count" };
@@ -124,5 +162,19 @@ internal static class Constants
                 "market_id", "prioritydomain", "page", "sentiment", "removeduplicate", "size",
                 "sort", "tag", "interval", "creator", "datatype", "sentiment_score",
             },
+            // Real-time query registration. No date/paging filters — a
+            // registered query matches news as it is published. news_type is
+            // set by WebsocketRegisterAsync, not by the caller.
+            ["websocket_register"] = new HashSet<string>
+            {
+                "q", "qintitle", "qinmeta", "country", "excludecountry", "category",
+                "excludecategory", "language", "excludelanguage", "domain", "domainurl",
+                "excludedomain", "prioritydomain", "timezone", "full_content", "image",
+                "video", "removeduplicate", "tag", "sentiment", "sentiment_score",
+                "region", "organization", "creator", "datatype", "excludefield",
+                "news_type",
+            },
+            ["websocket_fetch"]  = new HashSet<string>(),
+            ["websocket_delete"] = new HashSet<string> { "registration_id" },
         };
 }

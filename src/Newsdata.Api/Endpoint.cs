@@ -29,4 +29,13 @@ public static class Endpoint
 
     /// <summary><c>/1/market/count</c> — aggregate market counts.</summary>
     public const string MarketCount = "market_count";
+
+    /// <summary><c>/1/websocket/register</c> — register a real-time query.</summary>
+    public const string WebsocketRegister = "websocket_register";
+
+    /// <summary><c>/1/websocket/fetch</c> — list registered real-time queries.</summary>
+    public const string WebsocketFetch = "websocket_fetch";
+
+    /// <summary><c>/1/websocket/delete</c> — delete a registered real-time query.</summary>
+    public const string WebsocketDelete = "websocket_delete";
 }

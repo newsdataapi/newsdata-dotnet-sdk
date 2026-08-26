@@ -99,6 +99,56 @@ public sealed class NewsDataApiClient : IDisposable
     public Task<NewsdataResponse> MarketCountAsync(IDictionary<string, object?>? p = null, CancellationToken ct = default)
         => RequestAsync(Endpoint.MarketCount, p ?? Params.Of(), ct);
 
+    // ---- real-time query management ---------------------------------------
+
+    /// <summary>
+    /// Register a real-time WebSocket query. <c>POST /1/websocket/register</c>.
+    /// <para>Takes the familiar filter names (<c>q</c>, <c>country</c>,
+    /// <c>language</c>, <c>domain</c>, …); no date or paging filters apply,
+    /// since a registered query matches news as it is published. The new
+    /// query's id is at <c>results.registration_id</c> — pass it to
+    /// <see cref="NewsDataApiWebSocket.StreamAsync"/>.</para>
+    /// <para>Registering an identical query twice throws
+    /// <see cref="Exceptions.NewsdataApiException"/> with status 409; the
+    /// existing id is in its response body.</para>
+    /// </summary>
+    public Task<NewsdataResponse> WebsocketRegisterAsync(
+        IDictionary<string, object?>? p = null, CancellationToken ct = default)
+    {
+        var withType = new Dictionary<string, object?>(p ?? Params.Of())
+        {
+            ["news_type"] = Constants.WsNewsType,
+        };
+        return RequestAsync(Endpoint.WebsocketRegister, withType, ct);
+    }
+
+    /// <summary>
+    /// List the account's registered real-time queries.
+    /// <c>GET /1/websocket/fetch</c>. One entry per query at
+    /// <c>results.queries</c>.
+    /// </summary>
+    public Task<NewsdataResponse> WebsocketFetchAsync(CancellationToken ct = default)
+        => RequestAsync(Endpoint.WebsocketFetch, Params.Of(), ct);
+
+    /// <summary>
+    /// Delete a registered real-time query. <c>DELETE /1/websocket/delete</c>.
+    /// </summary>
+    public Task<NewsdataResponse> WebsocketDeleteAsync(
+        string registrationId, CancellationToken ct = default)
+    {
+        if (string.IsNullOrEmpty(registrationId))
+            throw new NewsdataValidationException(
+                "registrationId must be a non-empty string", "registration_id");
+        var p = new Dictionary<string, object?> { ["registration_id"] = registrationId };
+        return RequestAsync(Endpoint.WebsocketDelete, p, ct);
+    }
+
+    /// <summary>The API key, for the WebSocket handshake URL.</summary>
+    internal string ApiKeyForWebSocket => _options.ApiKey;
+
+    /// <summary>Forward a log line from the WebSocket layer.</summary>
+    internal void LogFromWebSocket(string level, string message) => Log(level, message);
+
     // ---- pagination ----------------------------------------------------
 
     /// <summary>
@@ -196,16 +246,17 @@ public sealed class NewsDataApiClient : IDisposable
         var path = Constants.EndpointPaths[endpoint];
         var url = _options.BaseUrl + path + "?" + BuildQueryString(encoded);
         var logUrl = RedactApiKey(url);
+        var method = Constants.EndpointMethods.TryGetValue(endpoint, out var m) ? m : HttpMethod.Get;
 
         Exception? lastError = null;
         for (var attempt = 1; attempt <= Math.Max(1, _options.MaxRetries); attempt++)
         {
-            Log("info", $"GET {logUrl} (attempt {attempt}/{_options.MaxRetries})");
+            Log("info", $"{method.Method} {logUrl} (attempt {attempt}/{_options.MaxRetries})");
 
             HttpResponseMessage response;
             try
             {
-                using var requestMessage = new HttpRequestMessage(HttpMethod.Get, url);
+                using var requestMessage = new HttpRequestMessage(method, url);
                 requestMessage.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
                 response = await _httpClient.SendAsync(requestMessage, ct).ConfigureAwait(false);
             }
@@ -248,21 +299,27 @@ public sealed class NewsDataApiClient : IDisposable
 
                 using (doc)
                 {
+                    var hasResults = doc is not null
+                        && doc.RootElement.TryGetProperty("results", out var resultsProbe)
+                        && resultsProbe.ValueKind != JsonValueKind.Null
+                        && resultsProbe.ValueKind != JsonValueKind.Undefined;
+
                     if (status == 200
                         && doc is not null
                         && doc.RootElement.TryGetProperty("status", out var statusEl)
                         && statusEl.ValueKind == JsonValueKind.String
                         && statusEl.GetString() == "success"
-                        && doc.RootElement.TryGetProperty("results", out var resultsEl)
-                        && resultsEl.ValueKind != JsonValueKind.Null
-                        && resultsEl.ValueKind != JsonValueKind.Undefined)
+                        && (hasResults || Constants.ResultsOptional.Contains(endpoint)))
                     {
+                        var resultsEl = hasResults
+                            ? doc.RootElement.GetProperty("results")
+                            : default;
                         return new NewsdataResponse
                         {
                             Status = "success",
                             TotalResults = doc.RootElement.TryGetProperty("totalResults", out var trEl)
                                 && trEl.TryGetInt32(out var tr) ? tr : 0,
-                            Results = resultsEl.Clone(),
+                            Results = hasResults ? resultsEl.Clone() : default,
                             NextPage = doc.RootElement.TryGetProperty("nextPage", out var npEl)
                                 && npEl.ValueKind == JsonValueKind.String ? npEl.GetString() : null,
                             Headers = _options.IncludeHeaders ? response.Headers : null,
