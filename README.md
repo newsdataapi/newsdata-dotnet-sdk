@@ -65,6 +65,9 @@ foreach (var article in resp.GetArticles())
 | `client.CountAsync(params)` | `/1/count` | Aggregate counts (requires `from_date`, `to_date`) |
 | `client.CryptoCountAsync(params)` | `/1/crypto/count` | Aggregate crypto counts |
 | `client.MarketCountAsync(params)` | `/1/market/count` | Aggregate market counts |
+| `client.WebsocketRegisterAsync(params)` | `/1/websocket/register` | Register a real-time query |
+| `client.WebsocketFetchAsync()` | `/1/websocket/fetch` | List registered queries |
+| `client.WebsocketDeleteAsync(id)` | `/1/websocket/delete` | Delete a registered query |
 
 `params` is `IDictionary<string, object?>` — pass a `Params` instance for
 fluent construction. Values may be `string`, `int`, `double`, `bool`, or
@@ -119,6 +122,80 @@ A `NewsdataValidationException` is thrown — before any HTTP request — when:
 Booleans for `full_content`, `image`, `video`, and `removeduplicate` are
 coerced to `"1"`/`"0"`.
 
+## Real-time news (WebSocket)
+
+Register a query first — the returned `registration_id` identifies it from then on:
+
+```csharp
+var registered = await client.WebsocketRegisterAsync(
+    Params.Of().With("q", "bitcoin").With("language", "en"));
+var registrationId = registered.Results.GetProperty("registration_id").GetString()!;
+```
+
+`WebsocketRegisterAsync` takes the familiar filter names (`q`, `country`,
+`language`, `domain`, …) — no date or paging filters, since a registered query
+matches news as it is published. Registering an identical query twice throws
+`NewsdataApiException` with status 409; the existing id is in its response body.
+`WebsocketFetchAsync()` lists every registered query and
+`WebsocketDeleteAsync(id)` removes one.
+
+Then stream — each response has the familiar `Status` / `TotalResults` /
+`Results` shape:
+
+```csharp
+using var ws = new NewsDataApiWebSocket(client);
+
+await foreach (var response in ws.StreamAsync(registrationId))
+{
+    foreach (var article in response.GetArticles())
+        Console.WriteLine($"{article.Title} - {article.Link}");
+}
+```
+
+Break out of the loop, cancel the token, or dispose the instance to stop; the
+connection is closed either way.
+
+Transient drops (network errors, server restarts, abnormal closes) are
+reconnected automatically with a capped exponential backoff. Set
+`Reconnect = false` to stop on the first disconnect instead. A permanent
+rejection — bad API key or unknown
+`registration_id`, exhausted API credits, or too many simultaneous devices — throws
+`NewsdataWebSocketAuthException` and is **not** retried.
+
+The server always accepts the handshake and then closes with code **1008** when
+the connection is refused, carrying one of three reasons: `invalid credentials
+or registration not found`, `api limit reached`, or `device limit reached` (more
+than 5 devices on one `registration_id`). Every other close code — including
+`1013` (`send timeout`, meaning the client read too slowly) — is transient and
+reconnects.
+
+**Each delivered article consumes 1 API credit per connected device.**
+
+Catch it like any other client error:
+
+```csharp
+try
+{
+    await foreach (var response in ws.StreamAsync(registrationId)) { /* ... */ }
+}
+catch (NewsdataWebSocketAuthException e) { Console.Error.WriteLine($"rejected: {e.Message}"); }
+catch (NewsdataWebSocketException e)     { Console.Error.WriteLine($"stream error: {e.Message}"); }
+```
+
+All connection options are optional:
+
+```csharp
+using var ws = new NewsDataApiWebSocket(client, new NewsDataApiWebSocketOptions
+{
+    BaseUrl           = "wss://ws.newsdata.io/ws/event",  // staging / self-hosted / proxied
+    Reconnect         = true,                             // default true
+    ReconnectDelay    = TimeSpan.FromSeconds(1),          // first delay; doubles each retry
+    ReconnectDelayMax = TimeSpan.FromSeconds(30),         // cap on the delay
+    HandshakeTimeout  = TimeSpan.FromSeconds(10),         // Zero disables
+    Headers           = new Dictionary<string, string> { ["X-Trace"] = "abc" },
+});
+```
+
 ## Error handling
 
 ```csharp
@@ -145,7 +222,9 @@ NewsdataException (extends Exception)
 │   ├── NewsdataAuthException               (401 / 403)
 │   ├── NewsdataRateLimitException          (429; .RetryAfter)
 │   └── NewsdataServerException             (5xx)
-└── NewsdataNetworkException                (.InnerException)
+├── NewsdataNetworkException                (.InnerException)
+└── NewsdataWebSocketException              (real-time stream)
+    └── NewsdataWebSocketAuthException      (policy-violation close 1008)
 ```
 
 ## Configuration
