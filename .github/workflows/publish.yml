@@ -16,6 +16,13 @@ on:
       - 'v*'
   workflow_dispatch: {}
 
+# One publish per ref at a time. GitHub can deliver a tag push more than once;
+# without this, two runs race and the registry rejects the loser as a duplicate
+# coordinate (seen on the v0.2.0 Maven Central release).
+concurrency:
+  group: publish-${{ github.ref }}
+  cancel-in-progress: false
+
 permissions:
   contents: read
   id-token: write   # reserved for OIDC trusted publishing once GA
