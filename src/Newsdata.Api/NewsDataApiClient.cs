@@ -331,7 +331,9 @@ public sealed class NewsDataApiClient : IDisposable
                     if (status == 429)
                     {
                         var retryAfter = ParseRetryAfter(response.Headers.RetryAfter);
-                        if (attempt >= _options.MaxRetries)
+                        // A 429 covers a burst limit, a rate limit, and
+                        // exhausted API credits. Only the first two retry.
+                        if (IsQuotaExhausted(doc) || attempt >= _options.MaxRetries)
                             throw new NewsdataRateLimitException(message, 429, body, retryAfter);
                         var wait = retryAfter > 0 ? TimeSpan.FromSeconds(retryAfter) : Backoff(attempt);
                         Log("warn", $"429 rate limit; sleeping {wait.TotalMilliseconds}ms");
@@ -405,6 +407,21 @@ public sealed class NewsDataApiClient : IDisposable
             return Math.Max(0, seconds);
         }
         return 0;
+    }
+
+    /// <summary>
+    /// Whether a 429 body carries an error code meaning the account is out of
+    /// API credits, as opposed to a transient rate limit.
+    /// </summary>
+    private static bool IsQuotaExhausted(JsonDocument? doc)
+    {
+        if (doc is null) return false;
+        if (!doc.RootElement.TryGetProperty("results", out var results)
+            || results.ValueKind != JsonValueKind.Object) return false;
+        if (!results.TryGetProperty("code", out var code)
+            || code.ValueKind != JsonValueKind.String) return false;
+        var value = code.GetString();
+        return value is not null && Constants.QuotaExhaustedCodes.Contains(value);
     }
 
     private static string ExtractErrorMessage(JsonDocument? doc, int status)

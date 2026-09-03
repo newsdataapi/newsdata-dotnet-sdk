@@ -277,6 +277,46 @@ public class NewsDataApiClientTests
         Assert.Null(art.MarketId);
     }
 
+    // A 429 covers a burst limit, a rate limit, and exhausted API credits.
+    // Only the first two are worth retrying.
+    [Theory]
+    [InlineData("ApiLimitExceeded")]
+    [InlineData("ApiKeyLimitExceeded")]
+    public async Task Quota_exhausted_429_is_not_retried(string code)
+    {
+        var calls = 0;
+        var handler = new MockHandler(_ =>
+        {
+            calls++;
+            return Resp(HttpStatusCode.TooManyRequests,
+                $"{{\"status\":\"error\",\"results\":{{\"message\":\"limit\",\"code\":\"{code}\"}}}}");
+        });
+        using var client = ClientWith(handler);
+
+        await Assert.ThrowsAsync<NewsdataRateLimitException>(
+            () => client.LatestAsync(Params.Of().With("q", "x")));
+        Assert.Equal(1, calls);
+    }
+
+    [Fact]
+    public async Task Transient_429_still_retries()
+    {
+        var calls = 0;
+        var handler = new MockHandler(_ =>
+        {
+            calls++;
+            return calls == 1
+                ? Resp(HttpStatusCode.TooManyRequests,
+                    "{\"status\":\"error\",\"results\":{\"message\":\"slow\",\"code\":\"RateLimitExceeded\"}}")
+                : Resp(HttpStatusCode.OK, "{\"status\":\"success\",\"results\":[{\"article_id\":\"1\",\"title\":\"ok\"}]}");
+        });
+        using var client = ClientWith(handler);
+
+        var resp = await client.LatestAsync(Params.Of().With("q", "x"));
+        Assert.Equal("success", resp.Status);
+        Assert.Equal(2, calls);
+    }
+
     [Fact]
     public async Task Count_returns_aggregate_map()
     {
