@@ -70,6 +70,18 @@ internal static class Constants
     /// <summary>Bound on the opening handshake.</summary>
     public static readonly TimeSpan WsHandshakeTimeout = TimeSpan.FromSeconds(10);
 
+    /// <summary>
+    /// Error codes on a 429 meaning the account's API credits are exhausted
+    /// rather than a transient rate limit. These are never retried — waiting
+    /// out the backoff cannot conjure more credits.
+    /// <para><c>ApiLimitExceeded</c> is the documented code (see the ErrorCode
+    /// enum in https://newsdata.io/openapi.json); <c>ApiKeyLimitExceeded</c> is
+    /// accepted too because the API has been observed to send it and the spec
+    /// is not exhaustive.</para>
+    /// </summary>
+    public static readonly IReadOnlySet<string> QuotaExhaustedCodes =
+        new HashSet<string>(StringComparer.Ordinal) { "ApiLimitExceeded", "ApiKeyLimitExceeded" };
+
     public static readonly IReadOnlySet<string> RequiresDateRange =
         new HashSet<string> { "count", "crypto_count", "market_count" };
 
