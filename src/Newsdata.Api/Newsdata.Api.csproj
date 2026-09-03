@@ -15,7 +15,7 @@
     <!-- NuGet package metadata -->
     <PropertyGroup>
         <PackageId>Newsdata.Api</PackageId>
-        <Version>0.2.0</Version>
+        <Version>0.2.1</Version>
         <Authors>NewsData.io</Authors>
         <Company>NewsData.io</Company>
         <Description>Official .NET client (SDK) for the Newsdata.io News API: typed methods for real-time, historical, crypto and market news with validation, retries and typed exceptions.</Description>

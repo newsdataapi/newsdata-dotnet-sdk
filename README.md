@@ -30,7 +30,7 @@ dotnet add package Newsdata.Api
 
 Or `csproj`:
 ```xml
-<PackageReference Include="Newsdata.Api" Version="0.2.0" />
+<PackageReference Include="Newsdata.Api" Version="0.2.1" />
 ```
 
 ## Quickstart
