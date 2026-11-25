@@ -3,13 +3,22 @@ name: Publish to NuGet
 # Publishes to NuGet.org when a v-prefixed tag is pushed (e.g. v0.0.2).
 # Optionally trigger manually from the Actions tab.
 #
-# Required GitHub secret (one-time setup):
-#   NUGET_API_KEY  - generated at https://www.nuget.org/account/apikeys
-#                    Scope: "Push new packages and package versions"
-#                    Glob:  Newsdata.* (or your namespace)
+# Tokenless publishing via OIDC trusted publishing: no API key is stored.
+# The job asks NuGet.org to exchange a short-lived GitHub OIDC token for a
+# temporary API key, so there is nothing to rotate and nothing to leak.
 #
-# Once NuGet.org's OIDC trusted publishing GA's, this can be migrated to
-# tokenless publishing (mirroring the npm / PyPI / pub.dev workflows).
+# Configured once at https://www.nuget.org/account/trustedpublishing with:
+#   Repository Owner: newsdataapi
+#   Repository:       newsdata-dotnet-sdk
+#   Workflow File:    publish.yml     (file name only, no path)
+#   Environment:      nuget           (must match `environment:` below)
+#   Glob:             Newsdata.*
+#
+# `user` is the nuget.org profile name, not an email. It is not a secret -
+# nuget.org shows it publicly as the package owner.
+#
+# The temporary key lives one hour, so the login step sits immediately before
+# the push rather than at the top of the job.
 on:
   push:
     tags:
@@ -25,7 +34,7 @@ concurrency:
 
 permissions:
   contents: read
-  id-token: write   # reserved for OIDC trusted publishing once GA
+  id-token: write   # required: lets the job mint the GitHub OIDC token
 
 jobs:
   publish:
@@ -42,13 +51,21 @@ jobs:
         with:
           dotnet-version: '8.0.x'
 
+      # On a tag push the tag must agree with the csproj version, so a
+      # mistyped tag cannot publish the wrong number. A manual run may be
+      # dispatched from a branch, where there is no tag to compare against;
+      # the csproj <Version> alone decides what is published.
       - name: Verify tag matches csproj version
         run: |
           PKG_VERSION=$(grep -oP '(?<=<Version>)[^<]+' src/Newsdata.Api/Newsdata.Api.csproj | head -1)
-          TAG="${GITHUB_REF_NAME#v}"
-          if [ "$PKG_VERSION" != "$TAG" ]; then
-            echo "::error::Release tag '${GITHUB_REF_NAME}' (version '$TAG') does not match csproj <Version> '$PKG_VERSION'"
-            exit 1
+          if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            TAG="${GITHUB_REF_NAME#v}"
+            if [ "$PKG_VERSION" != "$TAG" ]; then
+              echo "::error::Release tag '${GITHUB_REF_NAME}' (version '$TAG') does not match csproj <Version> '$PKG_VERSION'"
+              exit 1
+            fi
+          else
+            echo "Manual run from '${GITHUB_REF_NAME}' - no tag to check against."
           fi
           echo "Publishing Newsdata.Api $PKG_VERSION"
 
@@ -64,9 +81,15 @@ jobs:
             --no-restore \
             -o ./artifacts
 
+      - name: NuGet login (OIDC -> short-lived API key)
+        uses: NuGet/login@v1
+        id: login
+        with:
+          user: newsdata.io
+
       - name: Publish to NuGet.org
         run: |
           dotnet nuget push './artifacts/*.nupkg' \
-            --api-key "${{ secrets.NUGET_API_KEY }}" \
+            --api-key "${{ steps.login.outputs.NUGET_API_KEY }}" \
             --source https://api.nuget.org/v3/index.json \
             --skip-duplicate
