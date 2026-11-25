@@ -1,5 +1,7 @@
 using System.Net.Http;
 
+using Newsdata.Api.Exceptions;
+
 namespace Newsdata.Api;
 
 /// <summary>
@@ -9,7 +11,11 @@ namespace Newsdata.Api;
 /// </summary>
 internal static class Constants
 {
-    public const string BaseUrl = "https://newsdata.io/api/1/";
+    /// <summary>
+    /// API root (ends with a slash). The paths in <see cref="EndpointPaths"/>
+    /// carry the API version, so the v1 and v2 endpoints share one base.
+    /// </summary>
+    public const string BaseUrl = "https://newsdata.io/api/";
 
     public static readonly TimeSpan DefaultRequestTimeout    = TimeSpan.FromSeconds(30);
     public const int           DefaultMaxRetries             = 5;
@@ -24,17 +30,27 @@ internal static class Constants
     public static readonly IReadOnlyDictionary<string, string> EndpointPaths =
         new Dictionary<string, string>
         {
-            ["latest"]       = "latest",
-            ["crypto"]       = "crypto",
-            ["archive"]      = "archive",
-            ["sources"]      = "sources",
-            ["market"]       = "market",
-            ["count"]        = "count",
-            ["crypto_count"] = "crypto/count",
-            ["market_count"] = "market/count",
-            ["websocket_register"] = "websocket/register",
-            ["websocket_fetch"]    = "websocket/fetch",
-            ["websocket_delete"]   = "websocket/delete",
+            // v1
+            ["latest"]       = "1/latest",
+            ["crypto"]       = "1/crypto",
+            ["archive"]      = "1/archive",
+            ["sources"]      = "1/sources",
+            ["market"]       = "1/market",
+            ["count"]        = "1/count",
+            ["crypto_count"] = "1/crypto/count",
+            ["market_count"] = "1/market/count",
+            // v2
+            ["news_v2"]          = "2/news",
+            ["market_v2"]        = "2/market",
+            ["crypto_v2"]        = "2/crypto",
+            ["sources_v2"]       = "2/sources",
+            ["count_news_v2"]    = "2/count/news",
+            ["count_market_v2"]  = "2/count/market",
+            ["count_crypto_v2"]  = "2/count/crypto",
+            // The real-time service is v2 only.
+            ["websocket_register"] = "2/websocket/register",
+            ["websocket_fetch"]    = "2/websocket/fetch",
+            ["websocket_delete"]   = "2/websocket/delete",
         };
 
     /// <summary>HTTP method per endpoint; anything absent is a GET.</summary>
@@ -55,8 +71,10 @@ internal static class Constants
     /// <summary>Real-time WebSocket endpoint.</summary>
     public const string WsBaseUrl = "wss://ws.newsdata.io/ws/event";
 
-    /// <summary>The feed a registered query matches against.</summary>
-    public const string WsNewsType = "latest";
+    /// <summary>
+    /// The feed a registered query matches against; only news so far.
+    /// </summary>
+    public const string WsNewsType = "news";
 
     /// <summary>Close code the server uses for a permanent connection rejection.</summary>
     public const int WsPolicyViolation = 1008;
@@ -71,22 +89,55 @@ internal static class Constants
     public static readonly TimeSpan WsHandshakeTimeout = TimeSpan.FromSeconds(10);
 
     /// <summary>
-    /// Error codes on a 429 meaning the account's API credits are exhausted
-    /// rather than a transient rate limit. These are never retried — waiting
-    /// out the backoff cannot conjure more credits.
+    /// Error codes on a 429 that waiting cannot fix, so they are never retried.
+    /// <c>ApiLimitExceeded</c> and <c>ApiKeyLimitExceeded</c> mean the API
+    /// credits are exhausted rather than a transient rate limit — backoff
+    /// cannot conjure more credits. <c>RegistrationLimitExceeded</c> means
+    /// every real-time registration the plan allows is in use; only deleting
+    /// one frees a slot.
     /// <para><c>ApiLimitExceeded</c> is the documented code (see the ErrorCode
     /// enum in https://newsdata.io/openapi.json); <c>ApiKeyLimitExceeded</c> is
     /// accepted too because the API has been observed to send it and the spec
     /// is not exhaustive.</para>
     /// </summary>
     public static readonly IReadOnlySet<string> QuotaExhaustedCodes =
-        new HashSet<string>(StringComparer.Ordinal) { "ApiLimitExceeded", "ApiKeyLimitExceeded" };
+        new HashSet<string>(StringComparer.Ordinal)
+        {
+            "ApiLimitExceeded", "ApiKeyLimitExceeded", "RegistrationLimitExceeded",
+        };
+
+    /// <summary>
+    /// Error code on a 429 → the exception to throw. None of them is worth
+    /// retrying, but the remedy differs: <c>ApiLimitExceeded</c> is the
+    /// account's whole credit pool, <c>ApiKeyLimitExceeded</c> is this one
+    /// key's own cap, and <c>RegistrationLimitExceeded</c> is the real-time
+    /// registration slots — it keeps the base exception, since it is not about
+    /// credits at all.
+    /// </summary>
+    public static readonly IReadOnlyDictionary<
+            string, Func<string, int, string?, int, NewsdataRateLimitException>>
+        QuotaExhaustedErrors =
+            new Dictionary<string, Func<string, int, string?, int, NewsdataRateLimitException>>(
+                StringComparer.Ordinal)
+            {
+                ["ApiLimitExceeded"] = (m, s, b, r) =>
+                    new NewsdataApiLimitExceededException(m, s, b, r),
+                ["ApiKeyLimitExceeded"] = (m, s, b, r) =>
+                    new NewsdataApiKeyLimitExceededException(m, s, b, r),
+                ["RegistrationLimitExceeded"] = (m, s, b, r) =>
+                    new NewsdataRateLimitException(m, s, b, r),
+            };
 
     public static readonly IReadOnlySet<string> RequiresDateRange =
         new HashSet<string> { "count", "crypto_count", "market_count" };
 
     public static readonly IReadOnlySet<string> BoolParams =
-        new HashSet<string> { "full_content", "image", "video", "removeduplicate" };
+        new HashSet<string>
+        {
+            "full_content", "image", "video", "removeduplicate",
+            // v2 spellings
+            "content", "remove_duplicate",
+        };
 
     public static readonly IReadOnlySet<string> IntParams =
         new HashSet<string> { "size" };
@@ -104,7 +155,13 @@ internal static class Constants
         new[] { "country", "excludecountry" },
         new[] { "category", "excludecategory" },
         new[] { "language", "excludelanguage" },
-        new[] { "domain", "domainurl", "excludedomain" },
+        new[] { "domain", "domainurl", "excludedomain", "excludedomainurl" },
+        // v2 names
+        new[] { "q", "q_in_title", "q_in_meta" },
+        new[] { "country", "exclude_country" },
+        new[] { "category", "exclude_category" },
+        new[] { "language", "exclude_language" },
+        new[] { "source_url", "exclude_source_url" },
     };
 
     /// <summary>Per-endpoint accepted parameters (lowercase API names).</summary>
@@ -115,8 +172,8 @@ internal static class Constants
             {
                 "q", "qintitle", "qinmeta", "country", "excludecountry", "category",
                 "excludecategory", "language", "excludelanguage", "domain", "domainurl",
-                "excludedomain", "prioritydomain", "timeframe", "timezone", "size",
-                "full_content", "image", "video", "page", "tag", "sentiment", "region",
+                "excludedomain", "excludedomainurl", "prioritydomain", "timeframe", "timezone",
+                "size", "full_content", "image", "video", "page", "tag", "sentiment", "region",
                 "excludefield", "removeduplicate", "id", "organization", "url", "sort",
                 "creator", "datatype", "sentiment_score",
             },
@@ -124,18 +181,18 @@ internal static class Constants
             {
                 "q", "qintitle", "qinmeta", "country", "excludecountry", "category",
                 "excludecategory", "language", "excludelanguage", "domain", "domainurl",
-                "excludedomain", "prioritydomain", "timezone", "size", "full_content",
-                "image", "video", "page", "from_date", "to_date", "excludefield", "id",
-                "url", "sort", "tag", "sentiment", "sentiment_score", "region",
-                "organization", "creator", "datatype", "removeduplicate",
+                "excludedomain", "excludedomainurl", "prioritydomain", "timezone", "size",
+                "full_content", "image", "video", "page", "from_date", "to_date",
+                "excludefield", "id", "url", "sort", "tag", "sentiment", "sentiment_score",
+                "region", "organization", "creator", "datatype", "removeduplicate",
             },
             ["crypto"] = new HashSet<string>
             {
                 "q", "qintitle", "qinmeta", "language", "excludelanguage", "domain",
-                "domainurl", "excludedomain", "prioritydomain", "timeframe", "timezone",
-                "size", "full_content", "image", "video", "page", "tag", "sentiment",
-                "coin", "excludefield", "from_date", "to_date", "removeduplicate", "id",
-                "url", "sort",
+                "domainurl", "excludedomain", "excludedomainurl", "prioritydomain",
+                "timeframe", "timezone", "size", "full_content", "image", "video", "page",
+                "tag", "sentiment", "coin", "excludefield", "from_date", "to_date",
+                "removeduplicate", "id", "url", "sort",
             },
             ["sources"] = new HashSet<string>
             {
@@ -144,46 +201,107 @@ internal static class Constants
             ["market"] = new HashSet<string>
             {
                 "q", "qintitle", "qinmeta", "from_date", "to_date", "country",
-                "excludecountry", "domain", "domainurl", "excludedomain", "language",
-                "excludelanguage", "prioritydomain", "timezone", "timeframe", "size",
-                "full_content", "image", "video", "page", "tag", "sentiment",
+                "excludecountry", "domain", "domainurl", "excludedomain", "excludedomainurl",
+                "language", "excludelanguage", "prioritydomain", "timezone", "timeframe",
+                "size", "full_content", "image", "video", "page", "tag", "sentiment",
                 "excludefield", "removeduplicate", "organization", "market_id", "id", "url",
                 "sort", "creator", "datatype", "sentiment_score",
             },
             ["count"] = new HashSet<string>
             {
                 "from_date", "to_date", "q", "qintitle", "qinmeta", "country",
-                "excludecountry", "category", "excludecategory", "language",
-                "excludelanguage", "domain", "domainurl", "excludedomain", "full_content",
-                "image", "video", "prioritydomain", "page", "size", "sort", "interval",
-                "tag", "sentiment", "sentiment_score", "region", "organization", "creator",
+                "excludecountry", "category", "excludecategory", "language", "excludelanguage",
+                "domain", "domainurl", "excludedomain", "excludedomainurl", "full_content",
+                "image", "video", "prioritydomain", "page", "size", "sort", "interval", "tag",
+                "sentiment", "sentiment_score", "region", "organization", "creator",
                 "datatype", "removeduplicate",
             },
             ["crypto_count"] = new HashSet<string>
             {
                 "from_date", "to_date", "q", "qintitle", "qinmeta", "language",
                 "excludelanguage", "coin", "domain", "domainurl", "excludedomain",
-                "full_content", "image", "video", "prioritydomain", "page", "sentiment",
-                "size", "sort", "tag", "interval", "removeduplicate",
+                "excludedomainurl", "full_content", "image", "video", "prioritydomain", "page",
+                "sentiment", "size", "sort", "tag", "interval", "removeduplicate",
             },
             ["market_count"] = new HashSet<string>
             {
                 "from_date", "to_date", "q", "qintitle", "qinmeta", "country",
-                "excludecountry", "domain", "domainurl", "excludedomain", "language",
-                "excludelanguage", "full_content", "image", "video", "organization",
-                "market_id", "prioritydomain", "page", "sentiment", "removeduplicate", "size",
-                "sort", "tag", "interval", "creator", "datatype", "sentiment_score",
+                "excludecountry", "domain", "domainurl", "excludedomain", "excludedomainurl",
+                "language", "excludelanguage", "full_content", "image", "video",
+                "organization", "market_id", "prioritydomain", "page", "sentiment",
+                "removeduplicate", "size", "sort", "tag", "interval", "creator", "datatype",
+                "sentiment_score",
             },
-            // Real-time query registration. No date/paging filters — a
-            // registered query matches news as it is published. news_type is
-            // set by WebsocketRegisterAsync, not by the caller.
+
+            // ---- v2 ----------------------------------------------------
+            // v2 renames the filter vocabulary to snake_case and folds
+            // domain/domainurl/excludedomain/excludedomainurl into
+            // source_url/exclude_source_url.
+            ["news_v2"] = new HashSet<string>
+            {
+                "q", "q_in_title", "q_in_meta", "country", "exclude_country", "category",
+                "exclude_category", "language", "exclude_language", "source_url",
+                "exclude_source_url", "source_priority", "from_date", "to_date", "timeframe",
+                "timezone", "size", "content", "image", "video", "page", "tag", "sentiment",
+                "sentiment_score", "region", "organization", "creator", "datatype",
+                "exclude_field", "remove_duplicate", "id", "url", "sort",
+            },
+            ["market_v2"] = new HashSet<string>
+            {
+                "q", "q_in_title", "q_in_meta", "country", "exclude_country", "language",
+                "exclude_language", "source_url", "exclude_source_url", "source_priority",
+                "from_date", "to_date", "timeframe", "timezone", "size", "content", "image",
+                "video", "page", "tag", "sentiment", "sentiment_score", "organization",
+                "market_id", "creator", "datatype", "exclude_field", "remove_duplicate", "id",
+                "url", "sort",
+            },
+            ["crypto_v2"] = new HashSet<string>
+            {
+                "q", "q_in_title", "q_in_meta", "coin", "language", "exclude_language",
+                "source_url", "exclude_source_url", "source_priority", "from_date", "to_date",
+                "timeframe", "timezone", "size", "content", "image", "video", "page", "tag",
+                "sentiment", "exclude_field", "remove_duplicate", "id", "url", "sort",
+            },
+            ["sources_v2"] = new HashSet<string>
+            {
+                "country", "category", "language", "source_priority", "source_url",
+            },
+            ["count_news_v2"] = new HashSet<string>
+            {
+                "q", "q_in_title", "q_in_meta", "country", "exclude_country", "category",
+                "exclude_category", "language", "exclude_language", "source_url",
+                "exclude_source_url", "source_priority", "from_date", "to_date", "timeframe",
+                "interval", "size", "content", "image", "video", "page", "tag", "sentiment",
+                "sentiment_score", "region", "organization", "creator", "datatype",
+                "remove_duplicate", "sort",
+            },
+            ["count_market_v2"] = new HashSet<string>
+            {
+                "q", "q_in_title", "q_in_meta", "country", "exclude_country", "language",
+                "exclude_language", "source_url", "exclude_source_url", "source_priority",
+                "from_date", "to_date", "timeframe", "interval", "size", "content", "image",
+                "video", "page", "tag", "sentiment", "sentiment_score", "organization",
+                "market_id", "creator", "datatype", "remove_duplicate", "sort",
+            },
+            ["count_crypto_v2"] = new HashSet<string>
+            {
+                "q", "q_in_title", "q_in_meta", "coin", "language", "exclude_language",
+                "source_url", "exclude_source_url", "source_priority", "from_date", "to_date",
+                "timeframe", "interval", "size", "content", "image", "video", "page", "tag",
+                "sentiment", "remove_duplicate", "sort",
+            },
+
+            // Real-time query registration. The real-time service is v2 only,
+            // so these are the v2 filter names. No date or paging filters
+            // apply — a registered query matches news as it is published.
+            // news_type is set by WebsocketRegisterAsync, not by the caller.
             ["websocket_register"] = new HashSet<string>
             {
-                "q", "qintitle", "qinmeta", "country", "excludecountry", "category",
-                "excludecategory", "language", "excludelanguage", "domain", "domainurl",
-                "excludedomain", "prioritydomain", "timezone", "full_content", "image",
-                "video", "removeduplicate", "tag", "sentiment", "sentiment_score",
-                "region", "organization", "creator", "datatype", "excludefield",
+                "q", "q_in_title", "q_in_meta", "country", "exclude_country", "category",
+                "exclude_category", "language", "exclude_language", "source_url",
+                "exclude_source_url", "source_priority", "timezone", "content", "image",
+                "video", "remove_duplicate", "tag", "sentiment", "sentiment_score",
+                "region", "organization", "creator", "datatype", "exclude_field",
                 "news_type",
             },
             ["websocket_fetch"]  = new HashSet<string>(),

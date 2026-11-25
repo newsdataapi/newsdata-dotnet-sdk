@@ -9,6 +9,9 @@ namespace Newsdata.Api;
 /// <summary>
 /// NewsData.io real-time WebSocket service.
 ///
+/// <para>The real-time service is part of API v2, so registrations take the v2
+/// filter names and responses carry the v2 envelope and article layout.</para>
+///
 /// <para>Registers, lists, and deletes the account's real-time queries and
 /// streams the responses for a registered query. The management calls go
 /// through the wrapped <see cref="NewsDataApiClient"/>:</para>
@@ -20,10 +23,11 @@ namespace Newsdata.Api;
 /// var registered = await ws.WebsocketRegisterAsync(Params.Of().With("q", "bitcoin"));
 /// var id = registered.Results.GetProperty("registration_id").GetString()!;
 ///
+/// // Streamed articles use the v2 layout.
 /// await foreach (var response in ws.StreamAsync(id))
 /// {
-///     foreach (var article in response.GetArticles())
-///         Console.WriteLine(article.Title);
+///     foreach (var article in response.GetArticlesV2())
+///         Console.WriteLine($"{article.Title} - {article.Url} ({article.Source?.Name})");
 /// }
 /// </code>
 ///
@@ -87,8 +91,8 @@ public sealed class NewsDataApiWebSocket : IDisposable
 
     /// <summary>
     /// Connect and yield each response for <paramref name="registrationId"/>
-    /// as it arrives. Responses have the familiar <c>status</c> /
-    /// <c>totalResults</c> / <c>results</c> shape.
+    /// as it arrives. Responses carry <c>status</c>, <c>total_results</c> and
+    /// <c>results</c>, and their articles use the v2 layout.
     /// </summary>
     public async IAsyncEnumerable<NewsdataResponse> StreamAsync(
         string registrationId,
@@ -305,11 +309,9 @@ public sealed class NewsDataApiWebSocket : IDisposable
             {
                 Status = root.TryGetProperty("status", out var s) && s.ValueKind == JsonValueKind.String
                     ? s.GetString() : null,
-                TotalResults = root.TryGetProperty("totalResults", out var tr) && tr.TryGetInt32(out var n)
-                    ? n : 0,
+                TotalResults = NewsDataApiClient.TotalResultsOf(root),
                 Results = root.TryGetProperty("results", out var r) ? r.Clone() : default,
-                NextPage = root.TryGetProperty("nextPage", out var np) && np.ValueKind == JsonValueKind.String
-                    ? np.GetString() : null,
+                NextPage = NewsDataApiClient.NextPageOf(root),
                 Headers = null,
             };
         }

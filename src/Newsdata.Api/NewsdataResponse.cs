@@ -13,7 +13,10 @@ namespace Newsdata.Api;
 ///   <item>News endpoints (latest, archive, crypto, market) return an array of articles.</item>
 ///   <item>Count endpoints return an aggregate object on the final page.</item>
 /// </list>
-/// Use <see cref="GetArticles"/> / <see cref="GetAggregate"/> to decode it.
+/// Use <see cref="GetArticles"/> / <see cref="GetArticlesV2"/> /
+/// <see cref="GetAggregate"/> to decode it. <c>GetArticles</c> decodes the v1
+/// article layout, <c>GetArticlesV2</c> the v2 one; the real-time stream
+/// carries v2 articles.
 /// </summary>
 public sealed class NewsdataResponse
 {
@@ -47,6 +50,22 @@ public sealed class NewsdataResponse
         if (Results.ValueKind != JsonValueKind.Array)
             return Array.Empty<Article>();
         return Results.Deserialize<List<Article>>(JsonOptions) ?? new List<Article>();
+    }
+
+    /// <summary>
+    /// Decode <see cref="Results"/> as a list of v2 articles — the layout of
+    /// the v2 endpoints and of the real-time stream. Returns an empty list
+    /// when <c>Results</c> is empty or not a JSON array.
+    ///
+    /// <para>Use <see cref="GetArticles"/> instead for the v1 endpoints,
+    /// whose articles spell the same data differently (<c>link</c>,
+    /// <c>pubDate</c>, <c>article_id</c>).</para>
+    /// </summary>
+    public IReadOnlyList<ArticleV2> GetArticlesV2()
+    {
+        if (Results.ValueKind != JsonValueKind.Array)
+            return Array.Empty<ArticleV2>();
+        return Results.Deserialize<List<ArticleV2>>(JsonOptions) ?? new List<ArticleV2>();
     }
 
     /// <summary>

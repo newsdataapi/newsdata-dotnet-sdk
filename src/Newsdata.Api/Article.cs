@@ -3,7 +3,10 @@ using System.Text.Json.Serialization;
 namespace Newsdata.Api;
 
 /// <summary>
-/// A single news article returned by the Newsdata.io API.
+/// A single news article returned by API v1 of the Newsdata.io API.
+///
+/// <para>v2 renamed and regrouped these fields; see
+/// <see cref="ArticleV2"/>.</para>
 ///
 /// <para>Record type — immutable; access fields via property syntax.
 /// JSON keys use the API's snake_case; property names are PascalCase.</para>

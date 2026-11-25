@@ -65,7 +65,7 @@ public sealed class NewsDataApiClient : IDisposable
         if (_ownsHttpClient) _httpClient.Dispose();
     }
 
-    // ---- endpoint methods ----------------------------------------------
+    // ---- v1 endpoint methods -------------------------------------------
 
     /// <summary>Real-time news. GET /1/latest.</summary>
     public Task<NewsdataResponse> LatestAsync(IDictionary<string, object?>? p = null, CancellationToken ct = default)
@@ -99,14 +99,57 @@ public sealed class NewsDataApiClient : IDisposable
     public Task<NewsdataResponse> MarketCountAsync(IDictionary<string, object?>? p = null, CancellationToken ct = default)
         => RequestAsync(Endpoint.MarketCount, p ?? Params.Of(), ct);
 
+    // ---- v2 endpoint methods -------------------------------------------
+    //
+    // v2 renames the filter vocabulary to snake_case (q_in_title,
+    // exclude_country, source_priority, content, remove_duplicate, ...) and
+    // folds domain/domainurl/excludedomain/excludedomainurl into source_url /
+    // exclude_source_url. Responses carry total_results / next_page, which
+    // NewsdataResponse exposes as TotalResults / NextPage either way.
+
+    /// <summary>
+    /// Latest news, or historical news when <paramref name="p"/> carries
+    /// <c>from_date</c> / <c>to_date</c>. GET /2/news.
+    /// <para>There is no /2/archive; this endpoint covers both.</para>
+    /// </summary>
+    public Task<NewsdataResponse> NewsV2Async(IDictionary<string, object?>? p = null, CancellationToken ct = default)
+        => RequestAsync(Endpoint.NewsV2, p ?? Params.Of(), ct);
+
+    /// <summary>Market / financial news. GET /2/market.</summary>
+    public Task<NewsdataResponse> MarketV2Async(IDictionary<string, object?>? p = null, CancellationToken ct = default)
+        => RequestAsync(Endpoint.MarketV2, p ?? Params.Of(), ct);
+
+    /// <summary>Cryptocurrency news. GET /2/crypto.</summary>
+    public Task<NewsdataResponse> CryptoV2Async(IDictionary<string, object?>? p = null, CancellationToken ct = default)
+        => RequestAsync(Endpoint.CryptoV2, p ?? Params.Of(), ct);
+
+    /// <summary>Available news sources. Single page. GET /2/sources.</summary>
+    public Task<NewsdataResponse> SourcesV2Async(IDictionary<string, object?>? p = null, CancellationToken ct = default)
+        => RequestAsync(Endpoint.SourcesV2, p ?? Params.Of(), ct);
+
+    /// <summary>Aggregate news counts. GET /2/count/news.</summary>
+    public Task<NewsdataResponse> CountNewsV2Async(IDictionary<string, object?>? p = null, CancellationToken ct = default)
+        => RequestAsync(Endpoint.CountNewsV2, p ?? Params.Of(), ct);
+
+    /// <summary>Aggregate market counts. GET /2/count/market.</summary>
+    public Task<NewsdataResponse> CountMarketV2Async(IDictionary<string, object?>? p = null, CancellationToken ct = default)
+        => RequestAsync(Endpoint.CountMarketV2, p ?? Params.Of(), ct);
+
+    /// <summary>Aggregate crypto counts. GET /2/count/crypto.</summary>
+    public Task<NewsdataResponse> CountCryptoV2Async(IDictionary<string, object?>? p = null, CancellationToken ct = default)
+        => RequestAsync(Endpoint.CountCryptoV2, p ?? Params.Of(), ct);
+
     // ---- real-time query management ---------------------------------------
 
     /// <summary>
-    /// Register a real-time WebSocket query. <c>POST /1/websocket/register</c>.
-    /// <para>Takes the familiar filter names (<c>q</c>, <c>country</c>,
-    /// <c>language</c>, <c>domain</c>, …); no date or paging filters apply,
-    /// since a registered query matches news as it is published. The new
-    /// query's id is at <c>results.registration_id</c> — pass it to
+    /// Register a real-time WebSocket query. <c>POST /2/websocket/register</c>.
+    /// <para>The real-time service is v2 only, so this takes the same filter
+    /// names as <see cref="NewsV2Async"/> (<c>q</c>, <c>q_in_title</c>,
+    /// <c>country</c>, <c>exclude_country</c>, <c>source_url</c>,
+    /// <c>content</c>, <c>exclude_field</c>, <c>timezone</c>, …); the date,
+    /// paging and sorting filters, <c>id</c> and <c>url</c> do not apply to a
+    /// standing query. The new query's id is at
+    /// <c>results.registration_id</c> — pass it to
     /// <see cref="NewsDataApiWebSocket.StreamAsync"/>.</para>
     /// <para>Registering an identical query twice throws
     /// <see cref="Exceptions.NewsdataApiException"/> with status 409; the
@@ -124,14 +167,18 @@ public sealed class NewsDataApiClient : IDisposable
 
     /// <summary>
     /// List the account's registered real-time queries.
-    /// <c>GET /1/websocket/fetch</c>. One entry per query at
-    /// <c>results.queries</c>.
+    /// <c>GET /2/websocket/fetch</c>.
+    /// <para><c>results</c> is an array with one entry per query, each
+    /// carrying its <c>registration_id</c>, the filters it was registered with
+    /// (<c>query</c>), how many devices are streaming it now
+    /// (<c>active_clients</c>) and when one last connected (<c>last_used</c>,
+    /// UTC).</para>
     /// </summary>
     public Task<NewsdataResponse> WebsocketFetchAsync(CancellationToken ct = default)
         => RequestAsync(Endpoint.WebsocketFetch, Params.Of(), ct);
 
     /// <summary>
-    /// Delete a registered real-time query. <c>DELETE /1/websocket/delete</c>.
+    /// Delete a registered real-time query. <c>DELETE /2/websocket/delete</c>.
     /// </summary>
     public Task<NewsdataResponse> WebsocketDeleteAsync(
         string registrationId, CancellationToken ct = default)
@@ -162,7 +209,7 @@ public sealed class NewsDataApiClient : IDisposable
         int maxResults = 0,
         CancellationToken ct = default)
     {
-        if (endpoint == Endpoint.Sources)
+        if (endpoint is Endpoint.Sources or Endpoint.SourcesV2)
             throw new NewsdataValidationException("ScrollAllAsync is not supported for the sources endpoint");
 
         var req = new Params();
@@ -217,7 +264,7 @@ public sealed class NewsDataApiClient : IDisposable
         IDictionary<string, object?> p,
         [EnumeratorCancellation] CancellationToken ct = default)
     {
-        if (endpoint == Endpoint.Sources)
+        if (endpoint is Endpoint.Sources or Endpoint.SourcesV2)
             throw new NewsdataValidationException("Paginate is not supported for the sources endpoint");
 
         var req = new Params();
@@ -317,11 +364,9 @@ public sealed class NewsDataApiClient : IDisposable
                         return new NewsdataResponse
                         {
                             Status = "success",
-                            TotalResults = doc.RootElement.TryGetProperty("totalResults", out var trEl)
-                                && trEl.TryGetInt32(out var tr) ? tr : 0,
+                            TotalResults = TotalResultsOf(doc.RootElement),
                             Results = hasResults ? resultsEl.Clone() : default,
-                            NextPage = doc.RootElement.TryGetProperty("nextPage", out var npEl)
-                                && npEl.ValueKind == JsonValueKind.String ? npEl.GetString() : null,
+                            NextPage = NextPageOf(doc.RootElement),
                             Headers = _options.IncludeHeaders ? response.Headers : null,
                         };
                     }
@@ -331,9 +376,14 @@ public sealed class NewsDataApiClient : IDisposable
                     if (status == 429)
                     {
                         var retryAfter = ParseRetryAfter(response.Headers.RetryAfter);
+                        if (response.Headers.TryGetValues("X-APIKEY-Limit-Remaining", out var remaining))
+                            Log("warn", $"X-APIKEY-Limit-Remaining: {string.Join(",", remaining)}");
                         // A 429 covers a burst limit, a rate limit, and
                         // exhausted API credits. Only the first two retry.
-                        if (IsQuotaExhausted(doc) || attempt >= _options.MaxRetries)
+                        var quotaError = QuotaExhaustedError(doc);
+                        if (quotaError is not null)
+                            throw quotaError(message, 429, body, retryAfter);
+                        if (attempt >= _options.MaxRetries)
                             throw new NewsdataRateLimitException(message, 429, body, retryAfter);
                         var wait = retryAfter > 0 ? TimeSpan.FromSeconds(retryAfter) : Backoff(attempt);
                         Log("warn", $"429 rate limit; sleeping {wait.TotalMilliseconds}ms");
@@ -413,15 +463,47 @@ public sealed class NewsDataApiClient : IDisposable
     /// Whether a 429 body carries an error code meaning the account is out of
     /// API credits, as opposed to a transient rate limit.
     /// </summary>
-    private static bool IsQuotaExhausted(JsonDocument? doc)
+    /// <summary>
+    /// The exception to throw for a 429 whose body says the API credits are
+    /// exhausted, or <c>null</c> when the 429 is a transient rate limit worth
+    /// retrying.
+    /// </summary>
+    private static Func<string, int, string?, int, NewsdataRateLimitException>? QuotaExhaustedError(
+        JsonDocument? doc)
     {
-        if (doc is null) return false;
+        if (doc is null) return null;
         if (!doc.RootElement.TryGetProperty("results", out var results)
-            || results.ValueKind != JsonValueKind.Object) return false;
+            || results.ValueKind != JsonValueKind.Object) return null;
         if (!results.TryGetProperty("code", out var code)
-            || code.ValueKind != JsonValueKind.String) return false;
+            || code.ValueKind != JsonValueKind.String) return null;
         var value = code.GetString();
-        return value is not null && Constants.QuotaExhaustedCodes.Contains(value);
+        if (value is null || !Constants.QuotaExhaustedCodes.Contains(value)) return null;
+        return Constants.QuotaExhaustedErrors.TryGetValue(value, out var factory) ? factory : null;
+    }
+
+    /// <summary>
+    /// The result total from either envelope spelling: <c>total_results</c>
+    /// (v2) or <c>totalResults</c> (v1).
+    /// </summary>
+    internal static int TotalResultsOf(JsonElement root)
+    {
+        if (root.TryGetProperty("total_results", out var v2El) && v2El.TryGetInt32(out var v2))
+            return v2;
+        return root.TryGetProperty("totalResults", out var v1El) && v1El.TryGetInt32(out var v1)
+            ? v1 : 0;
+    }
+
+    /// <summary>
+    /// The paging cursor from either envelope spelling: <c>next_page</c> (v2)
+    /// or <c>nextPage</c> (v1).
+    /// </summary>
+    internal static string? NextPageOf(JsonElement root)
+    {
+        if (root.TryGetProperty("next_page", out var v2El)
+            && v2El.ValueKind == JsonValueKind.String)
+            return v2El.GetString();
+        return root.TryGetProperty("nextPage", out var v1El)
+            && v1El.ValueKind == JsonValueKind.String ? v1El.GetString() : null;
     }
 
     private static string ExtractErrorMessage(JsonDocument? doc, int status)

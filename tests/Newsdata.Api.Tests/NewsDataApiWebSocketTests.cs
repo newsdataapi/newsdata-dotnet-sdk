@@ -41,8 +41,8 @@ public class NewsDataApiWebSocketTests
         => new(new NewsDataApiClientOptions { ApiKey = "key" });
 
     private static string ArticleFrame(string id, string title)
-        => $"{{\"status\":\"success\",\"totalResults\":1,\"results\":"
-           + $"[{{\"article_id\":\"{id}\",\"title\":\"{title}\"}}]}}";
+        => $"{{\"status\":\"success\",\"total_results\":1,\"results\":"
+           + $"[{{\"id\":\"{id}\",\"title\":\"{title}\"}}]}}";
 
     private static NewsDataApiWebSocketOptions Options(string url, Action<NewsDataApiWebSocketOptions>? cfg = null)
     {
@@ -228,7 +228,7 @@ public class NewsDataApiWebSocketTests
 
         Assert.Equal(HttpMethod.Post, handler.Requests[0].Method);
         var url = handler.Requests[0].RequestUri!.ToString();
-        Assert.Contains("news_type=latest", url);
+        Assert.Contains("news_type=news", url);
         Assert.Contains("q=bitcoin", url);
         Assert.Contains("websocket/register", url);
         Assert.Equal("reg-9", response.Results.GetProperty("registration_id").GetString());
@@ -251,7 +251,7 @@ public class NewsDataApiWebSocketTests
     public async Task WebsocketFetch_uses_get()
     {
         var handler = new MockHandler(_ => Resp(HttpStatusCode.OK,
-            "{\"status\":\"success\",\"results\":{\"queries\":[]}}"));
+            "{\"status\":\"success\",\"total_results\":0,\"results\":[]}"));
         using var client = ClientWith(handler);
 
         await client.WebsocketFetchAsync();
@@ -289,5 +289,115 @@ public class NewsDataApiWebSocketTests
 
         var response = await client.WebsocketDeleteAsync("reg-9");
         Assert.Equal("success", response.Status);
+    }
+
+    // ---- API version 2 ----------------------------------------------------
+    // The real-time service moved to API version 2: the management endpoints
+    // sit under /2/, news_type names the v2 news feed, and a registration takes
+    // the v2 filter vocabulary only.
+
+    [Theory]
+    [InlineData(Endpoint.WebsocketRegister, "2/websocket/register")]
+    [InlineData(Endpoint.WebsocketFetch, "2/websocket/fetch")]
+    [InlineData(Endpoint.WebsocketDelete, "2/websocket/delete")]
+    public void Websocket_endpoints_are_under_api_version_2(string endpoint, string path)
+        => Assert.Equal(path, Constants.EndpointPaths[endpoint]);
+
+    [Fact]
+    public void WsNewsType_names_the_v2_news_feed()
+        => Assert.Equal("news", Constants.WsNewsType);
+
+    [Theory]
+    [InlineData("q_in_title")]
+    [InlineData("q_in_meta")]
+    [InlineData("exclude_country")]
+    [InlineData("exclude_category")]
+    [InlineData("exclude_language")]
+    [InlineData("source_url")]
+    [InlineData("exclude_source_url")]
+    [InlineData("source_priority")]
+    [InlineData("content")]
+    [InlineData("remove_duplicate")]
+    [InlineData("exclude_field")]
+    public void Register_takes_the_v2_filter_names(string name)
+        => Assert.Contains(name, Constants.Filters[Endpoint.WebsocketRegister]);
+
+    [Theory]
+    [InlineData("qintitle")]
+    [InlineData("qinmeta")]
+    [InlineData("excludecountry")]
+    [InlineData("excludecategory")]
+    [InlineData("excludelanguage")]
+    [InlineData("domain")]
+    [InlineData("domainurl")]
+    [InlineData("excludedomain")]
+    [InlineData("excludedomainurl")]
+    [InlineData("prioritydomain")]
+    [InlineData("full_content")]
+    [InlineData("removeduplicate")]
+    [InlineData("excludefield")]
+    // Still no date or paging filters on a standing query.
+    [InlineData("from_date")]
+    [InlineData("page")]
+    [InlineData("size")]
+    [InlineData("sort")]
+    public void Register_no_longer_takes_the_v1_filter_names(string name)
+        => Assert.DoesNotContain(name, Constants.Filters[Endpoint.WebsocketRegister]);
+
+    [Fact]
+    public async Task Register_rejects_a_v1_filter_name()
+    {
+        using var client = PlainClient();
+        await Assert.ThrowsAsync<NewsdataValidationException>(
+            () => client.WebsocketRegisterAsync(Params.Of().With("qInTitle", "pizza")));
+    }
+
+    [Fact]
+    public async Task Register_keeps_the_v2_source_url_mutex_group()
+    {
+        using var client = PlainClient();
+        await Assert.ThrowsAsync<NewsdataValidationException>(
+            () => client.WebsocketRegisterAsync(Params.Of()
+                .With("source_url", "a.com")
+                .With("exclude_source_url", "b.com")));
+    }
+
+    [Fact]
+    public async Task WebsocketFetch_returns_one_flat_entry_per_query()
+    {
+        var handler = new MockHandler(_ => Resp(HttpStatusCode.OK,
+            "{\"status\":\"success\",\"total_results\":1,\"results\":[{"
+            + "\"registration_id\":\"reg-9\",\"active_clients\":2,"
+            + "\"last_used\":\"2026-11-20T10:15:00Z\","
+            + "\"news_type\":\"news\",\"query\":{\"q\":\"pizza\"}}]}"));
+        using var client = ClientWith(handler);
+
+        var response = await client.WebsocketFetchAsync();
+
+        Assert.Equal(1, response.TotalResults);
+        Assert.Equal(System.Text.Json.JsonValueKind.Array, response.Results.ValueKind);
+        var entry = response.Results[0];
+        Assert.Equal("reg-9", entry.GetProperty("registration_id").GetString());
+        Assert.Equal(2, entry.GetProperty("active_clients").GetInt32());
+        Assert.Equal("2026-11-20T10:15:00Z", entry.GetProperty("last_used").GetString());
+        Assert.Equal("pizza", entry.GetProperty("query").GetProperty("q").GetString());
+    }
+
+    // RegistrationLimitExceeded means every registration slot the plan allows
+    // is in use. It is never retried, but keeps the base exception: it is about
+    // slots, not credits, so there is no dedicated subclass.
+    [Fact]
+    public async Task RegistrationLimitExceeded_keeps_the_base_exception()
+    {
+        var handler = new MockHandler(_ => Resp(HttpStatusCode.TooManyRequests,
+            "{\"status\":\"error\",\"results\":{\"message\":\"limit\","
+            + "\"code\":\"RegistrationLimitExceeded\"}}"));
+        using var client = ClientWith(handler);
+
+        var err = await Assert.ThrowsAnyAsync<NewsdataRateLimitException>(
+            () => client.WebsocketRegisterAsync(Params.Of().With("q", "x")));
+
+        Assert.IsType<NewsdataRateLimitException>(err);
+        Assert.Single(handler.Requests);
     }
 }

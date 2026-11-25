@@ -278,11 +278,13 @@ public class NewsDataApiClientTests
     }
 
     // A 429 covers a burst limit, a rate limit, and exhausted API credits.
-    // Only the first two are worth retrying.
+    // Only the first two are worth retrying. Each credit code gets its own
+    // exception type, because the remedy differs: the account's whole pool is
+    // gone, or just this one key's cap.
     [Theory]
-    [InlineData("ApiLimitExceeded")]
-    [InlineData("ApiKeyLimitExceeded")]
-    public async Task Quota_exhausted_429_is_not_retried(string code)
+    [InlineData("ApiLimitExceeded", typeof(NewsdataApiLimitExceededException))]
+    [InlineData("ApiKeyLimitExceeded", typeof(NewsdataApiKeyLimitExceededException))]
+    public async Task Quota_exhausted_429_is_not_retried(string code, Type expected)
     {
         var calls = 0;
         var handler = new MockHandler(_ =>
@@ -293,8 +295,10 @@ public class NewsDataApiClientTests
         });
         using var client = ClientWith(handler);
 
-        await Assert.ThrowsAsync<NewsdataRateLimitException>(
+        // ThrowsAnyAsync, not ThrowsAsync: the thrown type is a subclass.
+        var err = await Assert.ThrowsAnyAsync<NewsdataRateLimitException>(
             () => client.LatestAsync(Params.Of().With("q", "x")));
+        Assert.IsType(expected, err);
         Assert.Equal(1, calls);
     }
 

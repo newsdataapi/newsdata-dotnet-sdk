@@ -55,6 +55,98 @@ foreach (var article in resp.GetArticles())
 
 ## Endpoints
 
+The API has two versions. v2 is the current one; the v1 methods keep working
+unchanged.
+
+### v2
+
+| Method | Endpoint | Notes |
+|--------|----------|-------|
+| `client.NewsV2Async(params)` | `/2/news` | Latest news, or historical with `from_date` / `to_date` |
+| `client.MarketV2Async(params)` | `/2/market` | Market / financial news |
+| `client.CryptoV2Async(params)` | `/2/crypto` | Cryptocurrency news |
+| `client.SourcesV2Async(params)` | `/2/sources` | Available sources (single page) |
+| `client.CountNewsV2Async(params)` | `/2/count/news` | Aggregate news counts |
+| `client.CountMarketV2Async(params)` | `/2/count/market` | Aggregate market counts |
+| `client.CountCryptoV2Async(params)` | `/2/count/crypto` | Aggregate crypto counts |
+| `client.WebsocketRegisterAsync(params)` | `/2/websocket/register` | Register a real-time query |
+| `client.WebsocketFetchAsync()` | `/2/websocket/fetch` | List registered queries |
+| `client.WebsocketDeleteAsync(id)` | `/2/websocket/delete` | Delete a registered query |
+
+v2 renames the filter vocabulary to snake_case and folds the four domain
+filters into two:
+
+| v1 | v2 |
+|----|----|
+| `qInTitle`, `qInMeta` | `q_in_title`, `q_in_meta` |
+| `excludecountry`, `excludecategory`, `excludelanguage` | `exclude_country`, `exclude_category`, `exclude_language` |
+| `domain`, `domainurl`, `excludedomain`, `excludedomainurl` | `source_url`, `exclude_source_url` |
+| `prioritydomain` | `source_priority` |
+| `full_content` | `content` |
+| `removeduplicate`, `excludefield` | `remove_duplicate`, `exclude_field` |
+
+`coin` and `market_id` keep their names.
+
+```csharp
+var resp = await client.NewsV2Async(Params.Of()
+    .With("q_in_title", "tesla")
+    .With("source_url", "bbc.com")
+    .With("content", true));
+```
+
+The v2 envelope spells its total and cursor `total_results` / `next_page`
+where v1 spells them `totalResults` / `nextPage`. `NewsdataResponse` reads
+either, so `TotalResults`, `NextPage`, `ScrollAllAsync` and `PaginateAsync`
+behave the same whichever version answered. Pass `Endpoint.NewsV2` and
+friends to the pagination helpers.
+
+There is no `/2/archive` — `NewsV2Async` covers historical news through
+`from_date` / `to_date`.
+
+#### v2 articles
+
+v2 renamed and regrouped the article fields, so the v2 endpoints and the
+real-time stream decode with `GetArticlesV2()` and `ArticleV2`, while the v1
+endpoints keep `GetArticles()` and `Article`:
+
+```csharp
+var resp = await client.NewsV2Async(Params.Of().With("q", "bitcoin"));
+
+foreach (var a in resp.GetArticlesV2())
+{
+    Console.WriteLine($"{a.Title} {a.Url} {a.PublishedAt}");
+    Console.WriteLine($"{a.Source?.Name} {a.Source?.Priority}");
+    Console.WriteLine(a.Media?.ImageUrl);
+    Console.WriteLine($"{a.Ai?.Summary} {a.Ai?.Sentiment?.Label}");
+}
+```
+
+| v1 (`Article`) | v2 (`ArticleV2`) |
+|----------------|------------------|
+| `ArticleId` | `Id` |
+| `Link` | `Url` |
+| `PubDate` | `PublishedAt` |
+| `Description` | `MetaDescription` |
+| `Keywords` | `Keyword` |
+| `Symbol` | `Ticker` |
+| `SourceName`, `SourceUrl`, `SourcePriority`, `SourceIcon` | `Source.Name`, `Source.Url`, `Source.Priority`, `Source.IconUrl` |
+| `ImageUrl`, `VideoUrl` | `Media.ImageUrl`, `Media.VideoUrl` |
+| `Sentiment`, `SentimentStats` | `Ai.Sentiment.Label`, `Ai.Sentiment.Score` |
+| `AiTag`, `AiRegion`, `AiOrg` | `Ai.Tag`, `Ai.Region`, `Ai.Organization` |
+| — | `Ai.Summary`, `FetchedAt`, `Duplicate`, `Coin`, `MarketId` |
+
+A group the API did not send (`Source`, `Media`, `Ai`) is `null`, as is a list
+field it did not send. `Ai.Region` entries are comma-separated paths from the
+narrowest place to the widest (`"mumbai,maharashtra,india"`), so do not split
+them on commas.
+
+A field your plan does not include arrives as the API's notice string in place
+of the data (`"ONLY AVAILABLE IN PAID PLANS"`). Decoding tolerates it — a list
+field holds the single notice, and a withheld sentiment carries it in `Label` —
+and `ArticleV2.IsPlanNotice(value)` tells it apart from real data.
+
+### v1
+
 | Method | Endpoint | Notes |
 |--------|----------|-------|
 | `client.LatestAsync(params)` | `/1/latest` | Real-time news |
@@ -65,9 +157,8 @@ foreach (var article in resp.GetArticles())
 | `client.CountAsync(params)` | `/1/count` | Aggregate counts (requires `from_date`, `to_date`) |
 | `client.CryptoCountAsync(params)` | `/1/crypto/count` | Aggregate crypto counts |
 | `client.MarketCountAsync(params)` | `/1/market/count` | Aggregate market counts |
-| `client.WebsocketRegisterAsync(params)` | `/1/websocket/register` | Register a real-time query |
-| `client.WebsocketFetchAsync()` | `/1/websocket/fetch` | List registered queries |
-| `client.WebsocketDeleteAsync(id)` | `/1/websocket/delete` | Delete a registered query |
+
+The real-time service is v2 only — there are no v1 WebSocket methods.
 
 `params` is `IDictionary<string, object?>` — pass a `Params` instance for
 fluent construction. Values may be `string`, `int`, `double`, `bool`, or
@@ -124,7 +215,8 @@ coerced to `"1"`/`"0"`.
 
 ## Real-time news (WebSocket)
 
-Register a query first — the returned `registration_id` identifies it from then on:
+The real-time service is part of API v2. Register a query first — the returned
+`registration_id` identifies it from then on:
 
 ```csharp
 var registered = await client.WebsocketRegisterAsync(
@@ -132,23 +224,32 @@ var registered = await client.WebsocketRegisterAsync(
 var registrationId = registered.Results.GetProperty("registration_id").GetString()!;
 ```
 
-`WebsocketRegisterAsync` takes the familiar filter names (`q`, `country`,
-`language`, `domain`, …) — no date or paging filters, since a registered query
-matches news as it is published. Registering an identical query twice throws
-`NewsdataApiException` with status 409; the existing id is in its response body.
-`WebsocketFetchAsync()` lists every registered query and
-`WebsocketDeleteAsync(id)` removes one.
+`WebsocketRegisterAsync` takes the same filter names as `NewsV2Async` (`q`,
+`q_in_title`, `country`, `exclude_country`, `source_url`, `content`,
+`exclude_field`, `timezone`, …) — the date, paging and sorting filters, `id`
+and `url` don't apply to a standing query. Registering an identical query twice
+throws `NewsdataApiException` with status 409; the existing id is in its
+response body.
 
-Then stream — each response has the familiar `Status` / `TotalResults` /
-`Results` shape:
+`WebsocketFetchAsync()` lists every registered query: `Results` is an array
+with one entry per query, carrying its `registration_id`, the filters it was
+registered with (`query`), how many devices are streaming it now
+(`active_clients`) and when one last connected (`last_used`, UTC).
+`WebsocketDeleteAsync(id)` removes one. Once every registration the plan allows
+is in use, registering another throws a 429 `NewsdataRateLimitException`
+carrying the code `RegistrationLimitExceeded`; it is not retried, since only
+deleting a registration frees a slot.
+
+Then stream. Each response carries `Status`, `TotalResults` and `Results`, and
+its articles use the v2 layout, so decode them with `GetArticlesV2()`:
 
 ```csharp
 using var ws = new NewsDataApiWebSocket(client);
 
 await foreach (var response in ws.StreamAsync(registrationId))
 {
-    foreach (var article in response.GetArticles())
-        Console.WriteLine($"{article.Title} - {article.Link}");
+    foreach (var article in response.GetArticlesV2())
+        Console.WriteLine($"{article.Title} - {article.Url} ({article.Source?.Name})");
 }
 ```
 
@@ -221,6 +322,10 @@ NewsdataException (extends Exception)
 ├── NewsdataApiException                    (.StatusCode, .ResponseBody)
 │   ├── NewsdataAuthException               (401 / 403)
 │   ├── NewsdataRateLimitException          (429; .RetryAfter)
+│   │   ├── NewsdataApiLimitExceededException     (account credits gone)
+│   │   └── NewsdataApiKeyLimitExceededException  (this key's cap gone)
+│   │   (RegistrationLimitExceeded stays on NewsdataRateLimitException —
+│   │    real-time registration slots, not credits)
 │   └── NewsdataServerException             (5xx)
 ├── NewsdataNetworkException                (.InnerException)
 └── NewsdataWebSocketException              (real-time stream)
@@ -238,17 +343,31 @@ using var client = new NewsDataApiClient(new NewsDataApiClientOptions
     RetryBackoff = TimeSpan.FromSeconds(2),
     RetryBackoffMax = TimeSpan.FromSeconds(60),
     PaginationDelay = TimeSpan.FromSeconds(1),
-    BaseUrl = "https://staging.example/api/1/",
+    BaseUrl = "https://staging.example/api/",   // root, no version
     IncludeHeaders = true,
     HttpClient = myInjectedClient,     // proxies, mTLS, etc.
     Logger = (level, msg) => Console.WriteLine($"{level}: {msg}"),
 });
 ```
 
+`BaseUrl` is the API root **without** a version segment; the default is
+`https://newsdata.io/api/` and the client adds `1/…` or `2/…` itself. Before
+0.3.0 it included the version (`https://newsdata.io/api/1/`), so drop the
+trailing `1/` if you override it.
+
 Retries cover network errors, HTTP 429, and 5xx. 429 honours the
 `Retry-After` header (integer seconds or HTTP-date); otherwise backoff is
 exponential. Auth (401/403) and other 4xx errors are never retried. The
 API key is redacted from any URL passed to the logger.
+
+A 429 that waiting cannot fix is never retried.
+`NewsdataApiLimitExceededException` means the account's whole credit pool is
+exhausted, `NewsdataApiKeyLimitExceededException` means this one key hit its
+own cap while the account may still have credits; both derive from
+`NewsdataRateLimitException`, so an existing `catch` on that type keeps
+working. `RegistrationLimitExceeded` is also never retried, but keeps the plain
+`NewsdataRateLimitException` — it is about real-time registration slots, not
+credits, and is fixed by deleting a registration.
 
 ## Concurrency
 
